@@ -14,6 +14,10 @@ limitations under the License.
 ==============================================================================*/
 
 import * as nn from "./nn";
+import * as cnn from "./cnn";
+import * as image_data from "./data";
+import * as tf from '@tensorflow/tfjs';
+
 import {HeatMap, reduceMatrix} from "./heatmap";
 import {
   State,
@@ -141,6 +145,19 @@ class Player {
   }
 }
 
+function zeroPad(n: number): string {
+  let pad = "000000";
+  return (pad + n).slice(-pad.length);
+}
+
+function addCommas(s: string): string {
+  return s.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function humanReadable(n: number): string {
+  return n.toFixed(3);
+}
+
 let state = State.deserializeState();
 
 // Filter out inputs that are hidden.
@@ -165,10 +182,15 @@ let colorScale = d3.scale.linear<string, number>()
                      .domain([-1, 0, 1])
                      .range(["#f59322", "#e8eaeb", "#0877bd"])
                      .clamp(true);
+
 let iter = 0;
-let trainData: Example2D[] = [];
-let testData: Example2D[] = [];
-let network: nn.Node[][] = null;
+// let trainData: Example2D[] = [];
+// let testData: Example2D[] = [];
+let trainData;
+let testData;
+let dataset;
+// let network: nn.Node[][] = null;
+let network;
 let lossTrain = 0;
 let lossTest = 0;
 let player = new Player();
@@ -866,23 +888,9 @@ function updateUI(firstStep = false) {
         state.discretize);
   });
 
-  function zeroPad(n: number): string {
-    let pad = "000000";
-    return (pad + n).slice(-pad.length);
-  }
-
-  function addCommas(s: string): string {
-    return s.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  }
-
-  function humanReadable(n: number): string {
-    return n.toFixed(3);
-  }
-
   // Update loss and iteration number.
   d3.select("#loss-train").text(humanReadable(lossTrain));
   d3.select("#loss-test").text(humanReadable(lossTest));
-  d3.select("#iter-number").text(addCommas(zeroPad(iter)));
   lineChart.addDataPoint([lossTrain, lossTest]);
 }
 
@@ -908,18 +916,46 @@ function constructInput(x: number, y: number): number[] {
 
 function oneStep(): void {
   iter++;
-  trainData.forEach((point, i) => {
-    let input = constructInput(point.x, point.y);
-    nn.forwardProp(network, input);
-    nn.backProp(network, point.label, nn.Errors.SQUARE);
-    if ((i + 1) % state.batchSize === 0) {
-      nn.updateWeights(network, state.learningRate, state.regularizationRate);
-    }
+
+  let trainBatch
+  let testBatch
+  let trainLogs
+  let testLogs
+
+  tf.tidy(() => {
+    // console.log(network)
+    // console.log(dataset)
+    trainBatch = dataset.getNextTrainBatch()
+    testBatch = dataset.getNextTestBatch()
+    // console.log(batch)
+    trainLogs = network.trainOnBatch(trainBatch.xs, trainBatch.labels)
+    testLogs = Array.from(network.evaluate(testBatch.xs, testBatch.labels)[0].dataSync())
+    trainLogs.then(function(train_loss) {
+        console.log(train_loss, testLogs)
+        lineChart.addDataPoint([train_loss[0], testLogs[0]]);
+     })
+
+    // console.log("trained")
+    // console.log(iter)
   });
+
+  d3.select("#iter-number").text(addCommas(zeroPad(iter)));
+
+  // n
+  // trainData.forEach((point, i) => {
+    // train_batch
+    // let input = constructInput(point.x, point.y);
+    // nn.forwardProp(network, input);
+    // nn.backProp(network, point.label, nn.Errors.SQUARE);
+    // if ((i + 1) % state.batchSize === 0) {
+      // nn.updateWeights(network, state.learningRate, state.regularizationRate);
+    // }
+
+  // });
   // Compute the loss.
-  lossTrain = getLoss(network, trainData);
-  lossTest = getLoss(network, testData);
-  updateUI();
+  // lossTrain = getLoss(network, trainData);
+  // lossTest = getLoss(network, testData);
+  // updateUI();
 }
 
 export function getOutputWeights(network: nn.Node[][]): number[] {
@@ -937,7 +973,8 @@ export function getOutputWeights(network: nn.Node[][]): number[] {
   return weights;
 }
 
-function reset(onStartup=false) {
+async function reset(onStartup=false) {
+
   lineChart.reset();
   state.serialize();
   if (!onStartup) {
@@ -955,13 +992,204 @@ function reset(onStartup=false) {
   let shape = [numInputs].concat(state.networkShape).concat([1]);
   let outputActivation = (state.problem === Problem.REGRESSION) ?
       nn.Activations.LINEAR : nn.Activations.TANH;
-  network = nn.buildNetwork(shape, state.activation, outputActivation,
-      state.regularization, constructInputIds(), state.initZero);
-  lossTrain = getLoss(network, trainData);
-  lossTest = getLoss(network, testData);
-  drawNetwork(network);
-  updateUI(true);
+
+  // network = nn.buildNetwork(shape, state.activation, outputActivation,
+  //     state.regularization, constructInputIds(), state.initZero);
+  // lossTrain = getLoss(network, trainData);
+  // lossTest = getLoss(network, testData);
+  // drawNetwork(network);
+
+  // cnn.createConvModel()
+
+  // if (onStartup) {
+    
+  load_data('hello') 
+    
+  // }
+
+  console.log('Creating model...');
+  network = cnn.createConvModel();
+  network.summary();
+
+  const optimizer = 'rmsprop';
+  network.compile({
+    optimizer,
+    loss: 'categoricalCrossentropy',
+    metrics: ['accuracy'],
+  });
+
+  console.log(network)
+  // network.trainOnBatch()
+  // throw Error
+
+  // console.log('Starting model training...');
+  // await train(model, data, null);
+
+  console.log('Reset Network!');
+  console.log(dataset)
+
+  // updateUI(true);
 };
+
+async function load_data(dataset_string) {
+        // console.log(dataset)
+        console.log('Loading MNIST data...');
+
+        dataset = new image_data.MnistData();
+        await dataset.load();
+      }
+
+async function train(model, data, onIteration) {
+  console.log('Training model...');
+
+  // Now that we've defined our model, we will define our optimizer. The
+  // optimizer will be used to optimize our model's weight values during
+  // training so that we can decrease our training loss and increase our
+  // classification accuracy.
+
+  // We are using rmsprop as our optimizer.
+  // An optimizer is an iterative method for minimizing an loss function.
+  // It tries to find the minimum of our loss function with respect to the
+  // model's weight parameters.
+  const optimizer = 'rmsprop';
+
+  // We compile our model by specifying an optimizer, a loss function, and a
+  // list of metrics that we will use for model evaluation. Here we're using a
+  // categorical crossentropy loss, the standard choice for a multi-class
+  // classification problem like MNIST digits.
+  // The categorical crossentropy loss is differentiable and hence makes
+  // model training possible. But it is not amenable to easy interpretation
+  // by a human. This is why we include a "metric", namely accuracy, which is
+  // simply a measure of how many of the examples are classified correctly.
+  // This metric is not differentiable and hence cannot be used as the loss
+  // function of the model.
+  model.compile({
+    optimizer,
+    loss: 'categoricalCrossentropy',
+    metrics: ['accuracy'],
+  });
+
+  // Batch size is another important hyperparameter. It defines the number of
+  // examples we group together, or batch, between updates to the model's
+  // weights during training. A value that is too low will update weights using
+  // too few examples and will not generalize well. Larger batch sizes require
+  // more memory resources and aren't guaranteed to perform better.
+  const batchSize = 5;
+
+  // Leave out the last 15% of the training data for validation, to monitor
+  // overfitting during training.
+  const validationSplit = 0.15;
+
+  // Get number of training epochs from the UI.
+  // const trainEpochs = ui.getTrainEpochs();
+  const trainEpochs = 10
+
+  // We'll keep a buffer of loss and accuracy values over time.
+  let trainBatchCount = 0;
+
+  // const trainData = data.getTrainData();
+  // const testData = data.getTestData();
+
+  const totalNumBatches =
+      Math.ceil(trainData.xs.shape[0] * (1 - validationSplit) / batchSize) *
+      trainEpochs;
+
+  // During the long-running fit() call for model training, we include
+  // callbacks, so that we can plot the loss and accuracy values in the page
+  // as the training progresses.
+  let valLoss;
+  let validation_case;
+  let valPred;
+
+  validation_case = data.getTestData(1)
+  // valAcc = model.evaluate(validation_case.xs, validation_case.labels)
+  // valPred = model.predict(validation_case.xs)
+  console.log(model)
+  throw Error
+
+  await model.fit(trainData.xs, trainData.labels, {
+    batchSize,
+    epochs: trainEpochs,
+    callbacks: {
+      onBatchEnd: async (batch, logs) => {
+        trainBatchCount++;
+        console.log(
+            `Training... (` +
+            `${(trainBatchCount / totalNumBatches * 100).toFixed(1)}%` +
+            ` complete). To stop training, refresh or close page.`);
+        // ui.plotLoss(trainBatchCount, logs.loss, 'train');
+        // ui.plotAccuracy(trainBatchCount, logs.acc, 'train');
+        // console.log('training', trainBatchCount, logs.val_loss)
+        // console.log(validation_case)
+        // console.log(valAcc[0].dataSync(), valPred.dataSync())
+        // showPredictions(model, validation_case.xs)
+        // model.predict(validation_case.xs)
+        tf.tidy(() => {
+          valLoss = Array.from(model.evaluate(validation_case.xs, validation_case.labels)[0].dataSync());
+        });
+
+        lineChart.addDataPoint([logs.loss, valLoss]);
+
+        // if (onIteration && batch % 10 === 0) {
+          // onIteration('onBatchEnd', batch, logs);
+        // }
+        await tf.nextFrame();
+      },
+      onEpochEnd: async (epoch, logs) => {
+        // valAcc = logs.val_acc;
+        // ui.plotLoss(trainBatchCount, logs.val_loss, 'validation');
+        // ui.plotAccuracy(trainBatchCount, logs.val_acc, 'validation');
+        // console.log('validation', logs.val_loss, logs.val_acc)
+        // if (onIteration) {
+          // onIteration('onEpochEnd', epoch, logs);
+        // }
+        await tf.nextFrame();
+      }
+    }
+  });
+
+
+  // console.log(valAcc[0].dataSync(), valPred.dataSync())
+  let valAcc = 0;
+
+  const testResult = model.evaluate(testData.xs, testData.labels);
+  const testAccPercent = testResult[1].dataSync()[0] * 100;
+  const finalValAccPercent = valAcc * 100;
+  console.log(
+      `Final validation accuracy: ${finalValAccPercent.toFixed(1)}%; ` +
+      `Final test accuracy: ${testAccPercent.toFixed(1)}%`);
+}
+
+async function showPredictions(model, data) {
+  // const testExamples = 100;
+  // const examples = data.getTestData(testExamples);
+
+  // Code wrapped in a tf.tidy() function callback will have their tensors freed
+  // from GPU memory after execution without having to call dispose().
+  // The tf.tidy callback runs synchronously.
+  tf.tidy(() => {
+    const output = model.predict(data);
+
+    // tf.argMax() returns the indices of the maximum values in the tensor along
+    // a specific axis. Categorical classification tasks like this one often
+    // represent classes as one-hot vectors. One-hot vectors are 1D vectors with
+    // one element for each output class. All values in the vector are 0
+    // except for one, which has a value of 1 (e.g. [0, 0, 0, 1, 0]). The
+    // output from model.predict() will be a probability distribution, so we use
+    // argMax to get the index of the vector element that has the highest
+    // probability. This is our prediction.
+    // (e.g. argmax([0.07, 0.1, 0.03, 0.75, 0.05]) == 3)
+    // dataSync() synchronously downloads the tf.tensor values from the GPU so
+    // that we can use them in our normal CPU JavaScript code
+    // (for a non-blocking version of this function, use data()).
+    // const axis = 1;
+    // const labels = Array.from(examples.labels.argMax(axis).dataSync());
+    // const predictions = Array.from(output.argMax(axis).dataSync());
+
+    // ui.showTestResults(examples, predictions, labels);
+    console.log(Array.from(output.dataSync()));
+  });
+}
 
 function initTutorial() {
   if (state.tutorial == null || state.tutorial === '' || state.hideText) {
@@ -1116,6 +1344,6 @@ function simulationStarted() {
 drawDatasetThumbnails();
 initTutorial();
 makeGUI();
-generateData(true);
+// generateData(true);
 reset(true);
 hideControls();

@@ -20,11 +20,11 @@ import * as dataset from "./dataset";
 const HIDE_STATE_SUFFIX = "_hide";
 
 /** A map between names and activation functions. */
-export let activations: {[key: string]: nn.ActivationFunction} = {
-  "relu": nn.Activations.RELU,
-  "tanh": nn.Activations.TANH,
-  "sigmoid": nn.Activations.SIGMOID,
-  "linear": nn.Activations.LINEAR
+export let activations: {[key: string]: string} = {
+  "relu": "relu",
+  "tanh": "tanh",
+  "sigmoid": "sigmoid",
+  "linear": "relu"
 };
 
 /** A map between names and regularization functions. */
@@ -44,7 +44,7 @@ export let datasets: {[key: string]: dataset.DataGenerator} = {
 
 /** A map between dataset names and functions that generate regression data. */
 export let regDatasets: {[key: string]: dataset.DataGenerator} = {
-  "reg-plane": dataset.regressPlane,
+  "reg-plaactivationsne": dataset.regressPlane,
   "reg-gauss": dataset.regressGaussian
 };
 
@@ -142,7 +142,7 @@ export class State {
   discretize = false;
   tutorial: string = null;
   percTrainData = 50;
-  activation = nn.Activations.TANH;
+  activation = "relu";
   regularization: nn.RegularizationFunction = null;
   problem = Problem.CLASSIFICATION;
   initZero = false;
